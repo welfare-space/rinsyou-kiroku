@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AIアンビエント臨床記録デモ</title>
+    <title>AIアンビエント臨床記録デモ (3回試用版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
@@ -56,6 +56,11 @@
                         </span>
                         <span id="status-text" class="text-gray-600 font-medium">待機中</span>
                     </div>
+                </div>
+
+                <!-- **[NEW]** Trial Count Display -->
+                <div class="text-center bg-blue-100 text-blue-800 p-2 rounded-lg mb-4">
+                    AI処理の試用回数: <span id="trial-count-display" class="font-bold">3</span> / 3 回
                 </div>
 
                 <div class="flex flex-col sm:flex-row gap-4 mb-6">
@@ -136,6 +141,7 @@
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
         const loadingOverlay = document.getElementById('loading-overlay');
+        const trialCountDisplay = document.getElementById('trial-count-display'); // **[NEW]**
         
         const outputS = document.getElementById('output-s');
         const outputO = document.getElementById('output-o');
@@ -147,6 +153,10 @@
         const tabReferral = document.getElementById('tab-referral');
         const contentSoap = document.getElementById('content-soap');
         const contentReferral = document.getElementById('content-referral');
+
+        // **[NEW]** Trial Logic
+        const MAX_TRIALS = 3;
+        let trialCount = 0;
 
         // Speech Recognition Setup
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -164,12 +174,45 @@
 
         let finalTranscript = '';
         let isRecording = false;
+        let userStopped = false; 
+
+        // **[NEW]** Functions for trial management
+        function updateTrialDisplay() {
+            const remaining = Math.max(0, MAX_TRIALS - trialCount);
+            trialCountDisplay.textContent = `${remaining} / ${MAX_TRIALS}`;
+        }
+
+        function checkTrialLimitAndDisable() {
+            if (trialCount >= MAX_TRIALS) {
+                startButton.disabled = true;
+                stopButton.disabled = true;
+                const icon = startButton.querySelector('svg');
+                startButton.innerHTML = '試用回数を超えました';
+                if(icon) startButton.prepend(icon);
+                startButton.classList.add('bg-gray-400', 'cursor-not-allowed');
+                startButton.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+            }
+        }
+
+        // **[NEW]** Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedCount = localStorage.getItem('aiScribeTrialCount');
+            trialCount = savedCount ? parseInt(savedCount, 10) : 0;
+            updateTrialDisplay();
+            checkTrialLimitAndDisable();
+        });
+
 
         // Event Listeners for buttons
         startButton.addEventListener('click', () => {
+            if (trialCount >= MAX_TRIALS) {
+                alert('試用回数を超えました。ご利用ありがとうございました。');
+                return;
+            }
             if (!isRecording && recognition) {
                 finalTranscript = '';
-                transcriptDiv.innerHTML = '';
+                transcriptDiv.innerHTML = '<p class="text-gray-400">マイクに話しかけてください...</p>';
+                userStopped = false; 
                 recognition.start();
                 updateStatus('recording');
             }
@@ -177,6 +220,7 @@
 
         stopButton.addEventListener('click', () => {
             if (isRecording && recognition) {
+                userStopped = true; 
                 recognition.stop();
                 updateStatus('processing');
                 processWithAI(finalTranscript);
@@ -211,22 +255,36 @@
             };
 
             recognition.onend = () => {
-                isRecording = false;
-                startButton.disabled = false;
-                stopButton.disabled = true;
-                 if (statusText.textContent === '録音中...') {
-                    updateStatus('idle');
+                if (userStopped) {
+                    isRecording = false;
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+                    checkTrialLimitAndDisable(); // **[MODIFIED]** Re-check limit after stopping
+                    if (statusText.textContent === '録音中...') {
+                       updateStatus('idle');
+                    }
+                } else {
+                    if (isRecording) {
+                        try { recognition.start(); } catch(e) { console.error(e); }
+                    }
                 }
             };
 
             recognition.onerror = (event) => {
                 console.error('Speech recognition error:', event.error);
-                updateStatus('error');
+                if (event.error === 'no-speech') {
+                    if (isRecording && !userStopped) {
+                       try { recognition.start(); } catch(e) { console.error(e); }
+                    }
+                } else {
+                    updateStatus('error');
+                }
             };
 
             recognition.onresult = (event) => {
                 let interimTranscript = '';
-                finalTranscript = '';
+                // **[MODIFIED]** Clear finalTranscript at the beginning of result processing
+                finalTranscript = ''; 
                 for (let i = 0; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
                         finalTranscript += event.results[i][0].transcript;
@@ -270,6 +328,11 @@
 
         // Process with Gemini AI
         async function processWithAI(text) {
+            if (trialCount >= MAX_TRIALS) {
+                alert('試用回数を超えました。');
+                updateStatus('idle');
+                return;
+            }
             if (!text.trim()) {
                 alert('会話が記録されていません。AI処理を中止します。');
                 updateStatus('idle');
@@ -347,6 +410,12 @@ ${text}
                     const jsonText = result.candidates[0].content.parts[0].text;
                     const data = JSON.parse(jsonText);
                     updateUI(data);
+
+                    // **[MODIFIED]** Increment and save trial count on success
+                    trialCount++;
+                    localStorage.setItem('aiScribeTrialCount', trialCount);
+                    updateTrialDisplay();
+                    checkTrialLimitAndDisable();
 
                 } else {
                     console.error('Unexpected API response structure:', result);
