@@ -1,145 +1,396 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AIアンビエント臨床記録デモ</title>
-<style>
-  body { font-family: sans-serif; margin: 20px; }
-  #rec-toolbar button { padding: 6px 10px; }
-  textarea { width: 100%; }
-</style>
-</head>
-<body>
-<h1>AIアンビエント臨床記録デモ</h1>
-<div>
-  <label>医師と患者の会話:</label>
-  <textarea id="conversation" rows="6"></textarea>
-</div>
-<div style="margin-top:10px;">
-  <button onclick="generateRecord()">カルテを生成</button>
-</div>
-<div id="record-output" style="margin-top:20px; border:1px solid #ccc; padding:10px; white-space:pre-wrap;"></div>
-
-<!-- 録音UI -->
-<div id="rec-toolbar" style="margin-top:20px; display:flex; gap:8px; align-items:center;">
-  <button id="startRec">録音開始</button>
-  <button id="stopRec" disabled>録音停止</button>
-  <button id="downloadRec" disabled>録音をダウンロード</button>
-  <button id="uploadRec" disabled>サーバーへアップロード</button>
-  <label style="margin-left:12px;font-size:13px;">文字起こし:
-    <input type="checkbox" id="enableSTT" /> 使用する
-  </label>
-</div>
-<div id="rec-preview" style="margin-top:10px;">
-  <audio id="audioPlayback" controls style="display:block;max-width:100%;"></audio>
-  <div id="transcript" style="white-space:pre-wrap;margin-top:6px;color:#0f172a;"></div>
-</div>
-
-<script>
-function generateRecord() {
-  const conversation = document.getElementById('conversation').value;
-  const record = `【自動生成カルテ】\n${conversation}`;
-  document.getElementById('record-output').textContent = record;
-}
-
-let mediaRecorder;
-let recordedChunks = [];
-const startBtn = document.getElementById('startRec');
-const stopBtn = document.getElementById('stopRec');
-const downloadBtn = document.getElementById('downloadRec');
-const uploadBtn = document.getElementById('uploadRec');
-const audioEl = document.getElementById('audioPlayback');
-const transcriptEl = document.getElementById('transcript');
-const enableSTT = document.getElementById('enableSTT');
-
-startBtn.addEventListener('click', async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    recordedChunks = [];
-    mediaRecorder = new MediaRecorder(stream);
-
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = () => {
-      const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-      audioEl.src = URL.createObjectURL(blob);
-      downloadBtn.disabled = false;
-      uploadBtn.disabled = false;
-    };
-
-    mediaRecorder.start();
-    startBtn.disabled = true;
-    stopBtn.disabled = false;
-    transcriptEl.textContent = '録音中…';
-
-    if (enableSTT.checked && (window.SpeechRecognition || window.webkitSpeechRecognition)) {
-      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-      const rec = new SpeechRec();
-      rec.lang = 'ja-JP';
-      rec.interimResults = true;
-      rec.continuous = true;
-      rec.onresult = (ev) => {
-        let finalTxt = '';
-        let interim = '';
-        for (let i = 0; i < ev.results.length; i++) {
-          const res = ev.results[i];
-          if (res.isFinal) finalTxt += res[0].transcript;
-          else interim += res[0].transcript;
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI臨床記録デモ (Google Cloud版 - 1回試用)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
         }
-        transcriptEl.textContent = finalTxt + (interim ? '\n(途中): ' + interim : '');
-      };
-      rec.onerror = (e) => { console.warn('STT error', e); };
-      rec.start();
-      mediaRecorder._speechRecognition = rec;
-    } else {
-      if (enableSTT.checked) transcriptEl.textContent = 'ブラウザの音声認識が利用できません（Chrome推奨）。';
-    }
+        .loader {
+            border-top-color: #3498db;
+            -webkit-animation: spin 1s linear infinite;
+            animation: spin 1s linear infinite;
+        }
+        @-webkit-keyframes spin {
+            0% { -webkit-transform: rotate(0deg); }
+            100% { -webkit-transform: rotate(360deg); }
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .glowing-indicator {
+            animation: glowing 2s infinite;
+        }
+        @keyframes glowing {
+            0% { box-shadow: 0 0 3px #ef4444; }
+            50% { box-shadow: 0 0 15px #ef4444; }
+            100% { box-shadow: 0 0 3px #ef4444; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
 
-  } catch (err) {
-    alert('マイクへのアクセスが必要です: ' + err.message);
-  }
-});
+    <div id="app-container" class="container mx-auto p-4 md:p-8">
+        <!-- Header -->
+        <header class="mb-6 text-center">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900">AI臨床記録デモ (Google Cloud版)</h1>
+            <p class="mt-2 text-gray-600">高精度なAIが、診察の会話から自動でカルテや文書を作成します。</p>
+        </header>
 
-stopBtn.addEventListener('click', () => {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
-    transcriptEl.textContent += '\n[録音停止]';
-    if (mediaRecorder._speechRecognition) {
-      try { mediaRecorder._speechRecognition.stop(); } catch(e) {}
-    }
-  }
-});
+        <!-- API Key Input -->
+        <div class="mb-6 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-r-lg" role="alert">
+            <p class="font-bold">ステップ1: APIキーを入力してください</p>
+            <p class="text-sm">このデモを利用するには、Google CloudのAPIキーが必要です。</p>
+            <input type="password" id="apiKeyInput" placeholder="ここにAPIキーを貼り付け" class="mt-2 w-full p-2 border border-yellow-300 rounded-md focus:ring-yellow-500 focus:border-yellow-500">
+        </div>
 
-downloadBtn.addEventListener('click', () => {
-  const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'recording_' + new Date().toISOString().replace(/[:.]/g,'-') + '.webm';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-});
+        <!-- Main Content -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
-uploadBtn.addEventListener('click', async () => {
-  const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-  const fd = new FormData();
-  fd.append('file', blob, 'recording.webm');
-  try {
-    const res = await fetch('/upload', { method: 'POST', body: fd });
-    if (!res.ok) throw new Error('Upload failed: ' + res.status);
-    const json = await res.json();
-    alert('アップロード成功: ' + JSON.stringify(json));
-  } catch (err) {
-    alert('アップロード失敗: ' + err.message);
-  }
-});
-</script>
+            <!-- Left Column: Input & Transcription -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg border border-gray-200">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold text-gray-800">診察コントロール</h2>
+                    <div id="status-indicator" class="flex items-center space-x-2">
+                        <span class="relative flex h-3 w-3">
+                            <span id="status-dot" class="absolute inline-flex h-full w-full rounded-full bg-gray-400 opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-3 w-3 bg-gray-400"></span>
+                        </span>
+                        <span id="status-text" class="text-gray-600 font-medium">待機中</span>
+                    </div>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-4 mb-6">
+                    <button id="startButton" class="w-full flex items-center justify-center gap-2 bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-all shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                        録音開始
+                    </button>
+                    <button id="stopButton" class="w-full flex items-center justify-center gap-2 bg-red-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-red-700 transition-all shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" disabled>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12,2A10,10,0,1,0,22,12,10,10,0,0,0,12,2Zm0,18a8,8,0,1,1,8-8A8,8,0,0,1,12,20ZM10,8h4v8H10Z"/></svg>
+                        録音停止 & AI処理
+                    </button>
+                </div>
+
+                <div class="mt-4 space-y-4">
+                    <div>
+                        <h3 class="font-bold text-lg mb-2 text-gray-700">1. Cloud Speech-to-Textによる文字起こし</h3>
+                        <div id="transcript" class="w-full h-40 p-4 bg-gray-100 rounded-lg border border-gray-300 overflow-y-auto text-gray-700">
+                            <p class="text-gray-400">AI処理後に、音声認識の結果がここに表示されます。</p>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-lg mb-2 text-gray-700">2. Gemini AIによる自動修正・清書</h3>
+                        <div id="proofread-transcript" class="w-full h-40 p-4 bg-green-50 rounded-lg border border-green-300 overflow-y-auto text-gray-800">
+                            <p class="text-gray-400">清書されたテキストがここに表示されます。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: AI Output -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg border border-gray-200 relative">
+                <div id="loading-overlay" class="absolute inset-0 bg-white bg-opacity-80 flex-col items-center justify-center rounded-2xl z-10 hidden">
+                    <div class="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-24 w-24"></div>
+                    <p id="loading-text" class="mt-4 text-lg font-semibold text-gray-700">Gemini AIが処理中...</p>
+                </div>
+
+                <h2 class="text-xl font-bold text-gray-800 mb-4">3. AIによる生成結果</h2>
+                
+                <div class="border-b border-gray-200">
+                    <nav class="-mb-px flex space-x-6" aria-label="Tabs">
+                        <button id="tab-soap" class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-blue-600 border-blue-600">
+                            SOAP形式カルテ
+                        </button>
+                        <button id="tab-referral" class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300 border-transparent">
+                            紹介状
+                        </button>
+                    </nav>
+                </div>
+
+                <div id="content-soap" class="mt-6 space-y-4">
+                    <!-- SOAP content will be injected here -->
+                </div>
+
+                <div id="content-referral" class="mt-6 hidden">
+                     <!-- Referral letter content will be injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="demo-used-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-90 flex-col items-center justify-center text-white text-center p-8 z-50 hidden">
+        <h2 class="text-4xl font-bold mb-4">デモのご利用ありがとうございました</h2>
+        <p class="text-lg">このデバイスでの試用回数は終了しました。</p>
+        <p class="mt-2 text-gray-400">再度試す場合は、別のデバイスまたはブラウザのシークレットモードをご利用ください。</p>
+    </div>
+
+    <script>
+        // DOM Elements
+        const appContainer = document.getElementById('app-container');
+        const demoUsedOverlay = document.getElementById('demo-used-overlay');
+        const apiKeyInput = document.getElementById('apiKeyInput');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const transcriptDiv = document.getElementById('transcript');
+        const proofreadTranscriptDiv = document.getElementById('proofread-transcript');
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingText = document.getElementById('loading-text');
+        
+        const contentSoap = document.getElementById('content-soap');
+        const contentReferral = document.getElementById('content-referral');
+        const tabSoap = document.getElementById('tab-soap');
+        const tabReferral = document.getElementById('tab-referral');
+
+        let mediaRecorder;
+        let recordedChunks = [];
+        let isRecording = false;
+
+        // --- 1-Time Demo Logic ---
+        document.addEventListener('DOMContentLoaded', () => {
+            if (localStorage.getItem('gcpScribeDemoUsed') === 'true') {
+                appContainer.classList.add('hidden');
+                demoUsedOverlay.classList.remove('hidden');
+                demoUsedOverlay.classList.add('flex');
+            }
+            // Inject content templates
+            contentSoap.innerHTML = `
+                <div><h4 class="font-semibold text-gray-700">S: Subjective (主観的情報)</h4><div id="output-s" class="mt-1 p-3 bg-gray-100 rounded-md min-h-[50px] text-gray-600 border border-gray-200"></div></div>
+                <div><h4 class="font-semibold text-gray-700">O: Objective (客観的情報)</h4><div id="output-o" class="mt-1 p-3 bg-gray-100 rounded-md min-h-[50px] text-gray-600 border border-gray-200"></div></div>
+                <div><h4 class="font-semibold text-gray-700">A: Assessment (評価)</h4><div id="output-a" class="mt-1 p-3 bg-gray-100 rounded-md min-h-[50px] text-gray-600 border border-gray-200"></div></div>
+                <div><h4 class="font-semibold text-gray-700">P: Plan (計画)</h4><div id="output-p" class="mt-1 p-3 bg-gray-100 rounded-md min-h-[50px] text-gray-600 border border-gray-200"></div></div>
+            `;
+            contentReferral.innerHTML = `
+                <h4 class="font-semibold text-gray-700">紹介状 (下書き)</h4>
+                <div id="output-referral-letter" class="mt-1 p-3 bg-gray-100 rounded-md min-h-[200px] text-gray-600 border border-gray-200 whitespace-pre-wrap"></div>
+            `;
+        });
+        
+        // --- Event Listeners ---
+        startButton.addEventListener('click', async () => {
+            if (isRecording) return;
+            if (!apiKeyInput.value.trim()) {
+                alert('APIキーを入力してください。');
+                apiKeyInput.focus();
+                return;
+            }
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                startRecording(stream);
+            } catch (err) {
+                console.error("マイクへのアクセスに失敗:", err);
+                alert("マイクへのアクセスに失敗しました。ブラウザの設定でマイクの使用を許可してください。");
+            }
+        });
+
+        stopButton.addEventListener('click', () => {
+            if (!isRecording) return;
+            mediaRecorder.stop();
+        });
+        
+        tabSoap.addEventListener('click', () => {
+            contentSoap.classList.remove('hidden');
+            contentReferral.classList.add('hidden');
+            tabSoap.classList.add('text-blue-600', 'border-blue-600');
+            tabSoap.classList.remove('text-gray-500', 'hover:text-gray-700', 'hover:border-gray-300', 'border-transparent');
+            tabReferral.classList.add('text-gray-500', 'hover:text-gray-700', 'hover:border-gray-300', 'border-transparent');
+            tabReferral.classList.remove('text-blue-600', 'border-blue-600');
+        });
+
+        tabReferral.addEventListener('click', () => {
+            contentReferral.classList.remove('hidden');
+            contentSoap.classList.add('hidden');
+            tabReferral.classList.add('text-blue-600', 'border-blue-600');
+            tabReferral.classList.remove('text-gray-500', 'hover:text-gray-700', 'hover:border-gray-300', 'border-transparent');
+            tabSoap.classList.add('text-gray-500', 'hover:text-gray-700', 'hover:border-gray-300', 'border-transparent');
+            tabSoap.classList.remove('text-blue-600', 'border-blue-600');
+        });
+
+        // --- Core Functions ---
+        function startRecording(stream) {
+            recordedChunks = [];
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstart = () => {
+                isRecording = true;
+                startButton.disabled = true;
+                stopButton.disabled = false;
+                updateStatus('recording');
+            };
+
+            mediaRecorder.onstop = () => {
+                isRecording = false;
+                startButton.disabled = true; // Disable until processing is done
+                stopButton.disabled = true;
+                const audioBlob = new Blob(recordedChunks, { type: 'audio/webm' });
+                processAudio(audioBlob);
+            };
+
+            mediaRecorder.start();
+        }
+
+        async function processAudio(audioBlob) {
+            updateStatus('processing', '音声をテキストに変換中...');
+            
+            // Convert Blob to Base64
+            const reader = new FileReader();
+            reader.readAsDataURL(audioBlob);
+            reader.onloadend = async () => {
+                const base64Audio = reader.result.split(',')[1];
+                
+                try {
+                    // 1. Speech-to-Text API Call
+                    const rawText = await callSpeechToTextAPI(base64Audio);
+                    if (!rawText) throw new Error("音声認識の結果が空でした。");
+                    transcriptDiv.textContent = rawText;
+
+                    // 2. Gemini for Proofreading
+                    updateStatus('processing', 'AIが会話を清書中...');
+                    const proofreadPrompt = `あなたは優秀な医療専門の編集者です。以下の診察の会話の文字起こしに含まれる、誤字、脱字、不自然な言い回しを修正し、医療記録として自然で正確な文章に清書してください。内容を追加したり削除したりせず、元の会話の意図を忠実に保ってください。\n\n# 元のテキスト:\n${rawText}\n\n# 清書したテキスト:`;
+                    const cleanedText = await callGeminiAPI(proofreadPrompt);
+                    proofreadTranscriptDiv.textContent = cleanedText;
+
+                    // 3. Gemini for Structuring
+                    updateStatus('processing', 'AIがカルテを作成中...');
+                    const structuringPrompt = `あなたは非常に優秀なAI臨床書記です。以下の【清書済みの会話データ】を分析し、情報を抽出・整理してください。出力は必ず指定されたJSON形式にしてください。\n\n# 清書済みの会話データ\n${cleanedText}\n\n# 命令\n1. 上記の会話データから、SOAP形式でカルテを作成してください。\n2. 上記の会話データに基づき、専門医への紹介状を作成してください。\n\n# 出力形式 (JSON)\n{"soap_note": {"subjective": "...", "objective": "...", "assessment": "...", "plan": "..."}, "referral_letter": "..."}`;
+                    const structuredDataJson = await callGeminiAPI(structuringPrompt, true);
+                    const structuredData = JSON.parse(structuredDataJson);
+                    updateUI(structuredData);
+
+                    // Set demo as used
+                    localStorage.setItem('gcpScribeDemoUsed', 'true');
+                    alert('デモのご利用ありがとうございました。これでこのデバイスでの試用は終了です。');
+                    checkTrialLimitAndDisable();
+
+                } catch (error) {
+                    console.error('AI処理中にエラー:', error);
+                    alert(`エラーが発生しました: ${error.message}`);
+                    startButton.disabled = false; // Allow retry on error
+                } finally {
+                    updateStatus('idle');
+                }
+            };
+        }
+
+        async function callSpeechToTextAPI(audioContent) {
+            const apiKey = apiKeyInput.value.trim();
+            const apiUrl = `https://speech.googleapis.com/v1/speech:recognize?key=${apiKey}`;
+            
+            const payload = {
+                config: {
+                    encoding: 'WEBM_OPUS', // MediaRecorder's default
+                    sampleRateHertz: 48000, // Common for webm
+                    languageCode: 'ja-JP',
+                    model: 'default',
+                },
+                audio: {
+                    content: audioContent,
+                },
+            };
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.json();
+                console.error("Speech-to-Text API Error:", errorBody);
+                throw new Error(`Speech-to-Text APIエラー (${response.status}): ${errorBody.error.message}`);
+            }
+
+            const result = await response.json();
+            if (result.results && result.results.length > 0) {
+                return result.results.map(res => res.alternatives[0].transcript).join('\n');
+            }
+            return '';
+        }
+        
+        async function callGeminiAPI(prompt, isJsonOutput = false) {
+            const apiKey = apiKeyInput.value.trim();
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest/generateContent?key=${apiKey}`;
+            
+            const payload = {
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: isJsonOutput ? { responseMimeType: "application/json" } : {}
+            };
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.json();
+                console.error("Gemini API Error:", errorBody);
+                throw new Error(`Gemini APIエラー (${response.status}): ${errorBody.error.message}`);
+            }
+
+            const result = await response.json();
+            if (result.candidates && result.candidates[0].content.parts[0].text) {
+                return result.candidates[0].content.parts[0].text;
+            }
+            throw new Error('Gemini APIからの応答が予期しない形式です。');
+        }
+
+        function updateUI(data) {
+            document.getElementById('output-s').textContent = data.soap_note.subjective || '（情報なし）';
+            document.getElementById('output-o').textContent = data.soap_note.objective || '（情報なし）';
+            document.getElementById('output-a').textContent = data.soap_note.assessment || '（情報なし）';
+            document.getElementById('output-p').textContent = data.soap_note.plan || '（情報なし）';
+            document.getElementById('output-referral-letter').textContent = data.referral_letter || '（情報なし）';
+        }
+
+        function updateStatus(status, text = '待機中') {
+            statusDot.classList.remove('glowing-indicator', 'bg-red-500', 'bg-yellow-500', 'bg-gray-400');
+            loadingOverlay.classList.add('hidden');
+            loadingOverlay.classList.remove('flex');
+            
+            switch (status) {
+                case 'recording':
+                    statusText.textContent = '録音中...';
+                    statusDot.classList.add('bg-red-500', 'glowing-indicator');
+                    break;
+                case 'processing':
+                    statusText.textContent = 'AI処理中...';
+                    loadingText.textContent = text;
+                    statusDot.classList.add('bg-yellow-500');
+                    loadingOverlay.classList.remove('hidden');
+                    loadingOverlay.classList.add('flex');
+                    break;
+                case 'idle':
+                    statusText.textContent = '待機中';
+                    statusDot.classList.add('bg-gray-400');
+                    if (localStorage.getItem('gcpScribeDemoUsed') === 'true') {
+                        appContainer.classList.add('hidden');
+                        demoUsedOverlay.classList.remove('hidden');
+                        demoUsedOverlay.classList.add('flex');
+                    } else {
+                        startButton.disabled = false;
+                    }
+                    break;
+                case 'error':
+                     statusText.textContent = 'エラー';
+                     statusDot.classList.add('bg-red-500');
+                     break;
+            }
+        }
+    </script>
 </body>
 </html>
