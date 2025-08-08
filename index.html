@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AIアンビエント臨床記録デモ (安定版)</title>
+    <title>AIアンビエント臨床記録デモ (安定性向上版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
@@ -165,6 +165,9 @@
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         let recognition;
+        let isRecording = false;
+        let finalTranscript = '';
+
         if (SpeechRecognition) {
             recognition = new SpeechRecognition();
             recognition.continuous = true;
@@ -175,8 +178,6 @@
             startButton.disabled = true;
             stopButton.disabled = true;
         }
-
-        let isRecording = false;
 
         function updateTrialDisplay() {
             const remaining = Math.max(0, MAX_TRIALS - trialCount);
@@ -211,6 +212,7 @@
             
             transcriptDiv.innerHTML = '<p class="text-gray-400">マイクに話しかけてください...</p>';
             proofreadTranscriptDiv.innerHTML = '<p class="text-gray-400">AI処理後に、修正されたテキストが表示されます。</p>';
+            finalTranscript = ''; // **[FIX]** Reset transcript before starting
             
             try {
                 recognition.start();
@@ -255,10 +257,7 @@
                 isRecording = false;
                 startButton.disabled = false;
                 stopButton.disabled = true;
-                // AI処理はstopButtonが押された時のみ実行
-                if (statusText.textContent === '録音中...') {
-                    updateStatus('idle');
-                }
+                updateStatus('idle');
             };
 
             recognition.onerror = (event) => {
@@ -268,31 +267,29 @@
                 }
             };
 
-            // **[BUG FIX]** onresult handler logic simplified and corrected
+            // **[MAJOR BUG FIX]** Correctly implemented onresult handler
             recognition.onresult = (event) => {
-                let interimTranscript = '';
-                let finalTranscript = '';
+                let interim_transcript = '';
+                // Reset final transcript at the start of the handler
+                finalTranscript = ''; 
                 for (let i = 0; i < event.results.length; ++i) {
+                    // Build the final transcript by concatenating all final results
                     if (event.results[i].isFinal) {
                         finalTranscript += event.results[i][0].transcript;
                     } else {
-                        interimTranscript += event.results[i][0].transcript;
+                        // Build the interim transcript from non-final results
+                        interim_transcript += event.results[i][0].transcript;
                     }
                 }
-                transcriptDiv.innerHTML = `<p>${finalTranscript}<span class="text-gray-500">${interimTranscript}</span></p>`;
-                // AI処理はstopButtonが押された時に実行するため、ここでは何もしない
+                // Update the display with the full final transcript and the current interim part
+                transcriptDiv.innerHTML = `<p>${finalTranscript}<span class="text-gray-500">${interim_transcript}</span></p>`;
             };
             
-            // **[NEW]** Trigger AI processing when stop button is clicked
             stopButton.addEventListener('click', () => {
                 if (!isRecording) return;
                 recognition.stop();
-                
-                // Get the final text from the div
-                const finalConversationText = transcriptDiv.querySelector('p').textContent;
-                
                 updateStatus('processing', 'AIが会話を清書中...');
-                processWithAI(finalConversationText);
+                processWithAI(finalTranscript);
             });
         }
 
@@ -378,7 +375,6 @@ ${cleanedText}
                 localStorage.setItem('aiScribeTrialCount', trialCount);
                 updateTrialDisplay();
                 
-
             } catch (error) {
                 console.error('Error processing with AI:', error);
                 if (error.message.includes('403')) {
