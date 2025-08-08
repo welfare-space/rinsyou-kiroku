@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AIアンビエント臨床記録デモ (不具合修正版)</title>
+    <title>AIアンビエント臨床記録デモ (不具合修正版 v2)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
@@ -214,8 +214,12 @@
                 transcriptDiv.innerHTML = '<p class="text-gray-400">マイクに話しかけてください...</p>';
                 proofreadTranscriptDiv.innerHTML = '<p class="text-gray-400">AI処理後に、修正されたテキストが表示されます。</p>';
                 userStopped = false; 
-                recognition.start();
-                updateStatus('recording');
+                try {
+                    recognition.start();
+                } catch(e) {
+                    console.error("Recognition start failed:", e);
+                    alert("音声認識の開始に失敗しました。マイクが接続されているか、ブラウザのマイク使用が許可されているか確認してください。");
+                }
             }
         });
 
@@ -223,8 +227,7 @@
             if (isRecording && recognition) {
                 userStopped = true; 
                 recognition.stop();
-                updateStatus('processing', 'AIが会話を清書中...');
-                processWithAI(finalTranscript);
+                // AI processing is now triggered from the 'onend' event when userStopped is true
             }
         });
 
@@ -251,31 +254,33 @@
                 isRecording = true;
                 startButton.disabled = true;
                 stopButton.disabled = false;
+                updateStatus('recording');
             };
 
             recognition.onend = () => {
+                isRecording = false;
                 if (userStopped) {
-                    isRecording = false;
+                    // This is an intentional stop by the user.
                     startButton.disabled = false;
                     stopButton.disabled = true;
-                    checkTrialLimitAndDisable();
-                    if (statusText.textContent === '録音中...') {
-                       updateStatus('idle');
-                    }
+                    updateStatus('processing', 'AIが会話を清書中...');
+                    processWithAI(finalTranscript);
                 } else {
-                    if (isRecording) {
-                        try { recognition.start(); } catch(e) { console.error(e); }
+                    // This was an automatic stop (e.g., silence). Restart it.
+                    if (!userStopped) {
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            console.error("Recognition restart failed:", e);
+                            updateStatus('error');
+                        }
                     }
                 }
             };
 
             recognition.onerror = (event) => {
                 console.error('Speech recognition error:', event.error);
-                if (event.error === 'no-speech') {
-                    if (isRecording && !userStopped) {
-                       try { recognition.start(); } catch(e) { console.error(e); }
-                    }
-                } else {
+                if (event.error !== 'no-speech') {
                     updateStatus('error');
                 }
             };
@@ -283,15 +288,15 @@
             // **[BUG FIX]** onresult handler logic corrected
             recognition.onresult = (event) => {
                 let interimTranscript = '';
-                let newFinalTranscript = '';
+                let finalTranscriptFromEvent = '';
                 for (let i = 0; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
-                        newFinalTranscript += event.results[i][0].transcript;
+                        finalTranscriptFromEvent += event.results[i][0].transcript;
                     } else {
                         interimTranscript += event.results[i][0].transcript;
                     }
                 }
-                finalTranscript = newFinalTranscript;
+                finalTranscript = finalTranscriptFromEvent;
                 transcriptDiv.innerHTML = `<p>${finalTranscript}<span class="text-gray-500">${interimTranscript}</span></p>`;
             };
         }
@@ -316,6 +321,7 @@
                 case 'idle':
                     statusText.textContent = '待機中';
                     statusDot.classList.add('bg-gray-400');
+                    checkTrialLimitAndDisable();
                     break;
                 case 'error':
                      statusText.textContent = 'エラー';
@@ -338,7 +344,7 @@
 
             try {
                 updateStatus('processing', 'AIが会話を清書中...');
-                const proofreadPrompt = `あなたは優秀な医療専門の編集者です。以下の診察の会話の文字起こしに含まれる、誤字、脱字、不自然な言い回しを修正し、医療記録として自然で正確な文章に清書してください。内容を追加したり削除したりせず、元の会話の意図を忠実に保ってください。\n\n# 元のテキスト:\n${rawText}\n\n# 清書したテキスト:`;
+                const proofreadPrompt = `あなたは優秀な医療専門の編集者です。以下の診察の会話の文字起こしに含まれる、誤字、脱字、不自然な言い回しを修正し、医療記録として自然で正確な文章に清書してください。内容を追加したり削除したりせず、元の会話の意tuを忠実に保ってください。\n\n# 元のテキスト:\n${rawText}\n\n# 清書したテキスト:`;
                 const cleanedText = await callGemini(proofreadPrompt);
                 proofreadTranscriptDiv.textContent = cleanedText;
 
@@ -376,11 +382,15 @@ ${cleanedText}
                 trialCount++;
                 localStorage.setItem('aiScribeTrialCount', trialCount);
                 updateTrialDisplay();
-                checkTrialLimitAndDisable();
+                
 
             } catch (error) {
                 console.error('Error processing with AI:', error);
-                alert(`AI処理中にエラーが発生しました: ${error.message}`);
+                if (error.message.includes('403')) {
+                     alert(`AI処理中に権限エラー(403)が発生しました。APIの利用権限がないか、設定に問題がある可能性があります。`);
+                } else {
+                     alert(`AI処理中にエラーが発生しました: ${error.message}`);
+                }
                 updateStatus('error');
             } finally {
                 updateStatus('idle');
@@ -423,7 +433,8 @@ ${cleanedText}
             });
 
             if (!response.ok) {
-                throw new Error(`API request failed with status ${response.status}`);
+                // **[MODIFIED]** Throw error with status text for better debugging
+                throw new Error(`API request failed with status ${response.status} - ${response.statusText}`);
             }
 
             const result = await response.json();
