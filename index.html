@@ -1,235 +1,145 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>AIアンビエント臨床記録デモ</title>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif;margin:0;padding:24px;background:#f7fafc;color:#0f172a}
-    .container{max-width:1000px;margin:0 auto}
-    header{margin-bottom:18px}
-    h1{font-size:1.6rem;margin:0 0 6px}
-    small{color:#475569}
-    .panel{background:#fff;border-radius:12px;padding:16px;box-shadow:0 6px 18px rgba(15,23,42,0.06);margin-bottom:16px}
-    textarea{width:100%;min-height:140px;padding:10px;border-radius:8px;border:1px solid #e2e8f0;font-size:14px}
-    pre{white-space:pre-wrap;background:#0f172a;color:#f8fafc;padding:12px;border-radius:8px;overflow:auto}
-    .row{display:flex;gap:12px}
-    .col{flex:1}
-    button{background:#0ea5a4;color:white;border:none;padding:10px 12px;border-radius:8px;cursor:pointer}
-    button.secondary{background:#64748b}
-    label{display:block;margin-bottom:6px;font-weight:600}
-    .meta{font-size:13px;color:#64748b}
-    .field{background:#f1f5f9;padding:10px;border-radius:8px;margin-bottom:8px}
-    .toolbar{display:flex;gap:8px;align-items:center}
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIアンビエント臨床記録デモ</title>
+<style>
+  body { font-family: sans-serif; margin: 20px; }
+  #rec-toolbar button { padding: 6px 10px; }
+</style>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>AIアンビエント臨床記録デモ</h1>
-      <small>医師と患者の会話をもとに、AI風の自動カルテ（SOAPなど）を生成してHTMLで表示します。サンプル会話を編集して「生成」ボタンを押してください。</small>
-    </header>
+<h1>AIアンビエント臨床記録デモ</h1>
+<div>
+  <label>医師と患者の会話:</label>
+  <textarea id="conversation" rows="6" style="width:100%;"></textarea>
+</div>
+<div style="margin-top:10px;">
+  <button onclick="generateRecord()">カルテを生成</button>
+</div>
+<div id="record-output" style="margin-top:20px; border:1px solid #ccc; padding:10px;"></div>
 
-    <div class="panel">
-      <label for="conversation">会話（医師＝Dr., 患者＝Pt. のプレフィックスで記入）</label>
-      <textarea id="conversation">Dr.: こんにちは。今日はどうしましたか？
-Pt.: ここ2日ほど胸の圧迫感があって、息切れもします。特に寝ているときに強いです。
-Dr.: いつからですか？他に熱や咳はありますか？
-Pt.: 2日前からです。熱はないですが、軽い咳が出ます。タバコは1日10本くらい吸います。
-Dr.: 心臓病や喘息などの既往歴はありますか？
-Pt.: いいえ。今の薬は特に飲んでいません。
-Dr.: アレルギーは？
-Pt.: ありません。
-Dr.: ではバイタルを測りますね。血圧は140/88、脈拍98、体温36.6℃、SpO2 95%です。
-</textarea>
-
-      <div style="margin-top:10px" class="toolbar">
-        <button id="generate">生成</button>
-        <button id="reset" class="secondary">サンプルに戻す</button>
-        <button id="copy" class="secondary">カルテをコピー</button>
-      </div>
-    </div>
-
-    <div class="row">
-      <div class="col panel">
-        <h2>抽出結果（構造化）</h2>
-        <div id="structured">
-          <div class="meta">まだ生成されていません。『生成』を押してください。</div>
-        </div>
-      </div>
-
-      <div class="col panel">
-        <h2>生成されたカルテ（SOAP・診療要約）</h2>
-        <div id="notes">
-          <div class="meta">まだ生成されていません。『生成』を押してください。</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>生成ロジック（簡易）</h2>
-      <p class="meta">このデモでは会話テキストを解析して、下記のルールで情報を抽出しています（実運用では医療用AI APIと安全なワークフローが必要です）。</p>
-      <ul>
-        <li>話者プレフィックス（Dr., Pt.）で発話を分割</li>
-        <li>「2日前」「ここ2日」などの期間表現を主訴・現病歴にマッピング</li>
-        <li>バイタル（数字と単位）を正規表現で抽出</li>
-        <li>喫煙、既往歴、薬、アレルギーをキーワードで抽出</li>
-        <li>抽出結果をもとにSOAP、診断の鑑別、検査・処方案を提案（臨床判断は医師）</li>
-      </ul>
-    </div>
-
-  </div>
+<!-- 録音UI -->
+<div id="rec-toolbar" style="margin-top:20px; display:flex; gap:8px; align-items:center;">
+  <button id="startRec">録音開始</button>
+  <button id="stopRec" disabled>録音停止</button>
+  <button id="downloadRec" disabled>録音をダウンロード</button>
+  <button id="uploadRec" disabled>サーバーへアップロード</button>
+  <label style="margin-left:12px;font-size:13px;">文字起こし:
+    <input type="checkbox" id="enableSTT" /> 使用する
+  </label>
+</div>
+<div id="rec-preview" style="margin-top:10px;">
+  <audio id="audioPlayback" controls style="display:block;max-width:100%;"></audio>
+  <div id="transcript" style="white-space:pre-wrap;margin-top:6px;color:#0f172a;"></div>
+</div>
 
 <script>
-function parseConversation(text){
-  const lines = text.split(/\n+/).map(l=>l.trim()).filter(Boolean);
-  const entries = lines.map(l=>{
-    const m = l.match(/^(Dr\.|Pt\.)[:\s]*(.*)$/i);
-    if(m) return {who:m[1], text:m[2]};
-    return {who:'unknown', text:l};
-  });
+function generateRecord() {
+  const conversation = document.getElementById('conversation').value;
+  const record = `【自動生成カルテ】\n${conversation}`;
+  document.getElementById('record-output').textContent = record;
+}
 
-  const structured = {
-    chiefComplaint:'',
-    history:'',
-    vitals:{},
-    pastMedicalHistory:'',
-    medications:'',
-    allergies:'',
-    social:{smoking:'unknown'},
-    examFindings:[],
-    impressions:[],
-    plan:[]
-  };
+// 録音機能
+let mediaRecorder;
+let recordedChunks = [];
+const startBtn = document.getElementById('startRec');
+const stopBtn = document.getElementById('stopRec');
+downloadBtn = document.getElementById('downloadRec');
+const uploadBtn = document.getElementById('uploadRec');
+const audioEl = document.getElementById('audioPlayback');
+const transcriptEl = document.getElementById('transcript');
+const enableSTT = document.getElementById('enableSTT');
 
-  // Simple heuristics
-  entries.forEach(e=>{
-    const t = e.text;
-    if(e.who.toLowerCase().startsWith('pt') && /(胸|息切れ|痛み|痛い|圧迫感)/.test(t)){
-      if(!structured.chiefComplaint) structured.chiefComplaint = t;
-      structured.history += t + ' ';
-    }
-    if(/\b(\d+日前|ここ\d+日|昨日|一昨日|2日前|2日)/.test(t) && /胸|息切れ|痛/.test(t)){
-      structured.history += '発症時期: ' + t.match(/(\d+日前|ここ\d+日|昨日|一昨日|2日前|2日)/)?.[0] + '. ';
-    }
-    if(/喫煙|タバコ/.test(t)){
-      structured.social.smoking = t.replace(/.*?(タバコ|喫煙).*/,'$&');
-    }
-    if(/既往歴|喘息|心臓|心不全|心筋梗塞/.test(t)){
-      structured.pastMedicalHistory += t + ' ';
-    }
-    if(/薬|飲んでいません/.test(t)){
-      structured.medications += t + ' ';
-    }
-    if(/アレルギー|ありません/.test(t)){
-      if(/ありません/.test(t)) structured.allergies = 'なし'; else structured.allergies = t;
-    }
-    // Vitals
-    const bp = t.match(/(血圧[:：]?\s*)(\d{2,3}\/\d{2,3})/);
-    if(bp) structured.vitals.bloodPressure = bp[2];
-    const pulse = t.match(/脈拍[:：]?\s*(\d{2,3})/);
-    if(pulse) structured.vitals.pulse = pulse[1];
-    const temp = t.match(/体温[:：]?\s*(\d{2}\.\d)/);
-    if(temp) structured.vitals.temperature = temp[1];
-    const spo2 = t.match(/SpO2[:：]?\s*(\d{2})%?/i);
-    if(spo2) structured.vitals.spo2 = spo2[1] + '%';
+startBtn.addEventListener('click', async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
 
-    // exam findings
-    if(/測ります|血圧|脈拍|体温|SpO2/.test(t)) structured.examFindings.push(t);
-  });
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+    };
 
-  // Simple assessment rules
-  if(/胸.*圧迫感|息切れ/.test(structured.chiefComplaint + ' ' + structured.history)){
-    structured.impressions.push('胸部圧迫感・呼吸困難 — 心・肺疾患の鑑別が必要（狭心症、心不全、肺感染症、肺塞栓など）');
-    structured.plan.push('心電図（12誘導）実施');
-    structured.plan.push('胸部X線検査（必要に応じてCT）');
-    structured.plan.push('血液検査（心筋マーカー、CBC, CRP）');
-    structured.plan.push('安静、酸素投与の検討（SpO2が低下している場合）');
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+      audioEl.src = URL.createObjectURL(blob);
+      downloadBtn.disabled = false;
+      uploadBtn.disabled = false;
+    };
+
+    mediaRecorder.start();
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    transcriptEl.textContent = '録音中…';
+
+    if (enableSTT.checked && (window.SpeechRecognition || window.webkitSpeechRecognition)) {
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const rec = new SpeechRec();
+      rec.lang = 'ja-JP';
+      rec.interimResults = true;
+      rec.continuous = true;
+      rec.onresult = (ev) => {
+        let finalTxt = '';
+        let interim = '';
+        for (let i = 0; i < ev.results.length; i++) {
+          const res = ev.results[i];
+          if (res.isFinal) finalTxt += res[0].transcript;
+          else interim += res[0].transcript;
+        }
+        transcriptEl.textContent = finalTxt + (interim ? '\n(途中): ' + interim : '');
+      };
+      rec.onerror = (e) => { console.warn('STT error', e); };
+      rec.start();
+      mediaRecorder._speechRecognition = rec;
+    } else {
+      if (enableSTT.checked) transcriptEl.textContent = 'ブラウザの音声認識が利用できません（Chrome推奨）。';
+    }
+
+  } catch (err) {
+    alert('マイクへのアクセスが必要です: ' + err.message);
   }
-
-  // If vitals show tachycardia or high BP
-  const bp = structured.vitals.bloodPressure;
-  if(bp){
-    const parts = bp.split('/');
-    const sys = parseInt(parts[0]);
-    if(sys >= 140) structured.plan.push('高血圧の評価と管理（既往歴聴取、内服の検討）');
-  }
-  if(structured.vitals.pulse){
-    const p = parseInt(structured.vitals.pulse);
-    if(p >= 100) structured.impressions.push('頻脈');
-  }
-
-  return {entries, structured};
-}
-
-function renderStructured(obj){
-  const s = obj.structured;
-  let html = '';
-  html += `<div class=\"field\"><strong>主訴（Chief complaint）</strong><div>${escapeHtml(s.chiefComplaint||'—')}</div></div>`;
-  html += `<div class=\"field\"><strong>現病歴（HPI）</strong><div>${escapeHtml(s.history||'—')}</div></div>`;
-  html += `<div class=\"field\"><strong>既往歴</strong><div>${escapeHtml(s.pastMedicalHistory||'—')}</div></div>`;
-  html += `<div class=\"field\"><strong>内服薬</strong><div>${escapeHtml(s.medications||'—')}</div></div>`;
-  html += `<div class=\"field\"><strong>アレルギー</strong><div>${escapeHtml(s.allergies||'—')}</div></div>`;
-  html += `<div class=\"field\"><strong>社会歴</strong><div>喫煙: ${escapeHtml(s.social.smoking||'不明')}</div></div>`;
-  html += `<div class=\"field\"><strong>バイタル</strong><div>${Object.keys(s.vitals).length?escapeHtml(JSON.stringify(s.vitals)):'—'}</div></div>`;
-  html += `<div class=\"field\"><strong>診察所見（会話中）</strong><div>${escapeHtml(s.examFindings.join(' / ')||'—')}</div></div>`;
-  html += `<div class=\"field\"><strong>鑑別・印象</strong><div>${escapeHtml(s.impressions.join(' / ')||'—')}</div></div>`;
-  html += `<div class=\"field\"><strong>計画（Plan）</strong><div>${escapeHtml(s.plan.join('<br/>')||'—')}</div></div>`;
-  return html;
-}
-
-function generateNotes(parsed){
-  const s = parsed.structured;
-  // Build SOAP note
-  const soap = [];
-  soap.push('S: ' + (s.chiefComplaint || '述べなし') + '\n' + (s.history||''));
-  let o = 'O: ';
-  if(Object.keys(s.vitals).length){
-    o += 'BP ' + (s.vitals.bloodPressure||'—') + ', P ' + (s.vitals.pulse||'—') + ', T ' + (s.vitals.temperature||'—') + ', SpO2 ' + (s.vitals.spo2||'—') + '\n';
-  } else o += '—\n';
-  o += (s.examFindings.length? s.examFindings.join('\n') : '診察所見なし');
-  const a = 'A: ' + (s.impressions.join('; ') || '作成失敗');
-  const p = 'P: ' + (s.plan.join('; ') || '説明・経過観察');
-  const full = ['SOAP NOTE', soap.join('\n'), o, a, p].join('\n\n');
-
-  // Short visit summary
-  const summary = [];
-  summary.push('受診日: ' + (new Date()).toLocaleDateString());
-  summary.push('主訴: ' + (s.chiefComplaint||'—'));
-  summary.push('バイタル: ' + (Object.keys(s.vitals).length? JSON.stringify(s.vitals) : '—'));
-  summary.push('印象/鑑別: ' + (s.impressions.join('; ')||'—'));
-  summary.push('次回: ' + (s.plan.length? s.plan.join('; ') : '必要に応じて'));
-
-  return {soap: full, summary: summary.join('\n')};
-}
-
-function escapeHtml(str){
-  if(!str) return '';
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-// UI actions
-document.getElementById('generate').addEventListener('click', ()=>{
-  const txt = document.getElementById('conversation').value;
-  const parsed = parseConversation(txt);
-  document.getElementById('structured').innerHTML = renderStructured(parsed);
-  const notes = generateNotes(parsed);
-  document.getElementById('notes').innerHTML = `<pre>${escapeHtml(notes.soap)}</pre><h3>診療サマリー</h3><pre>${escapeHtml(notes.summary)}</pre>`;
 });
 
-document.getElementById('reset').addEventListener('click', ()=>{
-  const sample = `Dr.: こんにちは。今日はどうしましたか？\nPt.: ここ2日ほど胸の圧迫感があって、息切れもします。特に寝ているときに強いです。\nDr.: いつからですか？他に熱や咳はありますか？\nPt.: 2日前からです。熱はないですが、軽い咳が出ます。タバコは1日10本くらい吸います。\nDr.: 心臓病や喘息などの既往歴はありますか？\nPt.: いいえ。今の薬は特に飲んでいません。\nDr.: アレルギーは？\nPt.: ありません。\nDr.: ではバイタルを測りますね。血圧は140/88、脈拍98、体温36.6℃、SpO2 95%です。`;
-  document.getElementById('conversation').value = sample;
+stopBtn.addEventListener('click', () => {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    transcriptEl.textContent = transcriptEl.textContent + '\n[録音停止]';
+    if (mediaRecorder._speechRecognition) {
+      try { mediaRecorder._speechRecognition.stop(); } catch(e) {}
+    }
+  }
 });
 
-document.getElementById('copy').addEventListener('click', ()=>{
-  const notesEl = document.getElementById('notes');
-  if(!notesEl.innerText.trim()){ alert('先に「生成」を押してください'); return; }
-  navigator.clipboard.writeText(notesEl.innerText).then(()=>{alert('カルテ・サマリーをコピーしました');});
+downloadBtn.addEventListener('click', () => {
+  const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'recording_' + new Date().toISOString().replace(/[:.]/g,'-') + '.webm';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 });
 
-// initialize
-(function(){ document.getElementById('reset').click(); })();
+uploadBtn.addEventListener('click', async () => {
+  const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+  const fd = new FormData();
+  fd.append('file', blob, 'recording.webm');
+  try {
+    const res = await fetch('/upload', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error('Upload failed: ' + res.status);
+    const json = await res.json();
+    alert('アップロード成功: ' + JSON.stringify(json));
+  } catch (err) {
+    alert('アップロード失敗: ' + err.message);
+  }
+});
 </script>
 </body>
 </html>
