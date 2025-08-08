@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AIアンビエント臨床記録デモ (3回試用版)</title>
+    <title>AIアンビエント臨床記録デモ (精度向上版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
@@ -58,7 +58,6 @@
                     </div>
                 </div>
 
-                <!-- **[NEW]** Trial Count Display -->
                 <div class="text-center bg-blue-100 text-blue-800 p-2 rounded-lg mb-4">
                     AI処理の試用回数: <span id="trial-count-display" class="font-bold">3</span> / 3 回
                 </div>
@@ -74,11 +73,19 @@
                     </button>
                 </div>
 
-                <div class="mt-4">
-                    <h3 class="font-bold text-lg mb-2 text-gray-700">会話のリアルタイム文字起こし</h3>
-                    <div id="transcript" class="w-full h-64 p-4 bg-gray-100 rounded-lg border border-gray-300 overflow-y-auto text-gray-700">
-                        <p class="text-gray-400">ここに会話内容がリアルタイムで表示されます。「診察開始」ボタンを押して話してください。</p>
-                        <p class="text-gray-400 mt-2">例：「先生、3日前から頭が痛くて...」</p>
+                <div class="mt-4 space-y-4">
+                    <div>
+                        <h3 class="font-bold text-lg mb-2 text-gray-700">1. 会話のリアルタイム文字起こし</h3>
+                        <div id="transcript" class="w-full h-40 p-4 bg-gray-100 rounded-lg border border-gray-300 overflow-y-auto text-gray-700">
+                            <p class="text-gray-400">ここに会話内容がリアルタイムで表示されます。</p>
+                        </div>
+                    </div>
+                    <!-- **[NEW]** Proofread Text Display -->
+                    <div>
+                        <h3 class="font-bold text-lg mb-2 text-gray-700">2. AIによる自動修正・清書</h3>
+                        <div id="proofread-transcript" class="w-full h-40 p-4 bg-green-50 rounded-lg border border-green-300 overflow-y-auto text-gray-800">
+                            <p class="text-gray-400">AI処理後に、誤字脱字などを修正したテキストがここに表示されます。</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -87,10 +94,10 @@
             <div class="bg-white p-6 rounded-2xl shadow-lg border border-gray-200 relative">
                 <div id="loading-overlay" class="absolute inset-0 bg-white bg-opacity-80 flex-col items-center justify-center rounded-2xl z-10 hidden">
                     <div class="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-24 w-24"></div>
-                    <p class="mt-4 text-lg font-semibold text-gray-700">Gemini AIがカルテを作成中...</p>
+                    <p id="loading-text" class="mt-4 text-lg font-semibold text-gray-700">Gemini AIが処理中...</p>
                 </div>
 
-                <h2 class="text-xl font-bold text-gray-800 mb-4">AIによる生成結果</h2>
+                <h2 class="text-xl font-bold text-gray-800 mb-4">3. AIによる生成結果</h2>
                 
                 <!-- Tabs -->
                 <div class="border-b border-gray-200">
@@ -137,11 +144,13 @@
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
         const transcriptDiv = document.getElementById('transcript');
+        const proofreadTranscriptDiv = document.getElementById('proofread-transcript'); // **[NEW]**
         const statusIndicator = document.getElementById('status-indicator');
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
         const loadingOverlay = document.getElementById('loading-overlay');
-        const trialCountDisplay = document.getElementById('trial-count-display'); // **[NEW]**
+        const loadingText = document.getElementById('loading-text'); // **[NEW]**
+        const trialCountDisplay = document.getElementById('trial-count-display');
         
         const outputS = document.getElementById('output-s');
         const outputO = document.getElementById('output-o');
@@ -154,11 +163,9 @@
         const contentSoap = document.getElementById('content-soap');
         const contentReferral = document.getElementById('content-referral');
 
-        // **[NEW]** Trial Logic
         const MAX_TRIALS = 3;
         let trialCount = 0;
 
-        // Speech Recognition Setup
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         let recognition;
         if (SpeechRecognition) {
@@ -176,7 +183,6 @@
         let isRecording = false;
         let userStopped = false; 
 
-        // **[NEW]** Functions for trial management
         function updateTrialDisplay() {
             const remaining = Math.max(0, MAX_TRIALS - trialCount);
             trialCountDisplay.textContent = `${remaining} / ${MAX_TRIALS}`;
@@ -194,7 +200,6 @@
             }
         }
 
-        // **[NEW]** Initialize on page load
         document.addEventListener('DOMContentLoaded', () => {
             const savedCount = localStorage.getItem('aiScribeTrialCount');
             trialCount = savedCount ? parseInt(savedCount, 10) : 0;
@@ -202,8 +207,6 @@
             checkTrialLimitAndDisable();
         });
 
-
-        // Event Listeners for buttons
         startButton.addEventListener('click', () => {
             if (trialCount >= MAX_TRIALS) {
                 alert('試用回数を超えました。ご利用ありがとうございました。');
@@ -212,6 +215,7 @@
             if (!isRecording && recognition) {
                 finalTranscript = '';
                 transcriptDiv.innerHTML = '<p class="text-gray-400">マイクに話しかけてください...</p>';
+                proofreadTranscriptDiv.innerHTML = '<p class="text-gray-400">AI処理後に、修正されたテキストが表示されます。</p>';
                 userStopped = false; 
                 recognition.start();
                 updateStatus('recording');
@@ -222,12 +226,11 @@
             if (isRecording && recognition) {
                 userStopped = true; 
                 recognition.stop();
-                updateStatus('processing');
+                updateStatus('processing', 'AIが会話を清書中...');
                 processWithAI(finalTranscript);
             }
         });
 
-        // Event Listeners for tabs
         tabSoap.addEventListener('click', () => {
             contentSoap.classList.remove('hidden');
             contentReferral.classList.add('hidden');
@@ -246,7 +249,6 @@
             tabSoap.classList.remove('text-blue-600', 'border-blue-600');
         });
 
-        // Speech Recognition Event Handlers
         if (recognition) {
             recognition.onstart = () => {
                 isRecording = true;
@@ -259,7 +261,7 @@
                     isRecording = false;
                     startButton.disabled = false;
                     stopButton.disabled = true;
-                    checkTrialLimitAndDisable(); // **[MODIFIED]** Re-check limit after stopping
+                    checkTrialLimitAndDisable();
                     if (statusText.textContent === '録音中...') {
                        updateStatus('idle');
                     }
@@ -283,7 +285,6 @@
 
             recognition.onresult = (event) => {
                 let interimTranscript = '';
-                // **[MODIFIED]** Clear finalTranscript at the beginning of result processing
                 finalTranscript = ''; 
                 for (let i = 0; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
@@ -296,9 +297,10 @@
             };
         }
 
-        // Update UI status
-        function updateStatus(status) {
+        function updateStatus(status, text = '待機中') {
             statusDot.classList.remove('glowing-indicator', 'bg-red-500', 'bg-yellow-500', 'bg-gray-400');
+            loadingOverlay.classList.add('hidden');
+            loadingOverlay.classList.remove('flex');
             
             switch (status) {
                 case 'recording':
@@ -307,6 +309,7 @@
                     break;
                 case 'processing':
                     statusText.textContent = 'AI処理中...';
+                    loadingText.textContent = text;
                     statusDot.classList.add('bg-yellow-500');
                     loadingOverlay.classList.remove('hidden');
                     loadingOverlay.classList.add('flex');
@@ -314,37 +317,42 @@
                 case 'idle':
                     statusText.textContent = '待機中';
                     statusDot.classList.add('bg-gray-400');
-                    loadingOverlay.classList.add('hidden');
-                    loadingOverlay.classList.remove('flex');
                     break;
                 case 'error':
                      statusText.textContent = 'エラー';
                      statusDot.classList.add('bg-red-500');
-                     loadingOverlay.classList.add('hidden');
-                     loadingOverlay.classList.remove('flex');
                      break;
             }
         }
 
-        // Process with Gemini AI
-        async function processWithAI(text) {
+        // **[MODIFIED]** 2-step AI processing
+        async function processWithAI(rawText) {
             if (trialCount >= MAX_TRIALS) {
                 alert('試用回数を超えました。');
                 updateStatus('idle');
                 return;
             }
-            if (!text.trim()) {
+            if (!rawText.trim()) {
                 alert('会話が記録されていません。AI処理を中止します。');
                 updateStatus('idle');
                 return;
             }
 
-            const prompt = `
-あなたは非常に優秀なAI臨床書記です。以下の医師と患者の会話の文字起こしデータを分析し、情報を抽出・整理してください。
+            try {
+                // Step 1: Proofread the transcript
+                updateStatus('processing', 'AIが会話を清書中...');
+                const proofreadPrompt = `あなたは優秀な医療専門の編集者です。以下の診察の会話の文字起こしに含まれる、誤字、脱字、不自然な言い回しを修正し、医療記録として自然で正確な文章に清書してください。内容を追加したり削除したりせず、元の会話の意図を忠実に保ってください。\n\n# 元のテキスト:\n${rawText}\n\n# 清書したテキスト:`;
+                const cleanedText = await callGemini(proofreadPrompt);
+                proofreadTranscriptDiv.textContent = cleanedText;
+
+                // Step 2: Generate SOAP note and referral letter from the cleaned text
+                updateStatus('processing', 'AIがカルテを作成中...');
+                const structuringPrompt = `
+あなたは非常に優秀なAI臨床書記です。以下の【清書済みの会話データ】を分析し、情報を抽出・整理してください。
 出力は必ず指定されたJSON形式にしてください。
 
-# 会話データ
-${text}
+# 清書済みの会話データ
+${cleanedText}
 
 # 命令
 1. 上記の会話データから、SOAP形式でカルテを作成してください。
@@ -365,9 +373,36 @@ ${text}
   "referral_letter": "ここに紹介状の全文を記述"
 }
 `;
+                const structuredDataJson = await callGemini(structuringPrompt, true);
+                const structuredData = JSON.parse(structuredDataJson);
+                updateUI(structuredData);
+
+                // **[MODIFIED]** Increment and save trial count on success
+                trialCount++;
+                localStorage.setItem('aiScribeTrialCount', trialCount);
+                updateTrialDisplay();
+                checkTrialLimitAndDisable();
+
+            } catch (error) {
+                console.error('Error processing with AI:', error);
+                alert(`AI処理中にエラーが発生しました: ${error.message}`);
+                updateStatus('error');
+            } finally {
+                updateStatus('idle');
+            }
+        }
+        
+        // **[NEW]** Reusable Gemini API call function
+        async function callGemini(prompt, isJsonOutput = false) {
+            const apiKey = ""; // APIキーは不要です
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+            
             const payload = {
-                contents: [{ role: "user", parts: [{ text: prompt }] }],
-                generationConfig: {
+                contents: [{ role: "user", parts: [{ text: prompt }] }]
+            };
+
+            if (isJsonOutput) {
+                payload.generationConfig = {
                     responseMimeType: "application/json",
                     responseSchema: {
                         type: "OBJECT",
@@ -385,53 +420,30 @@ ${text}
                         }
                     }
                 }
-            };
-            
-            const apiKey = ""; // APIキーは不要です
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+            }
 
-            try {
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
-                if (!response.ok) {
-                    throw new Error(`API request failed with status ${response.status}`);
-                }
+            if (!response.ok) {
+                throw new Error(`API request failed with status ${response.status}`);
+            }
 
-                const result = await response.json();
-                
-                if (result.candidates && result.candidates.length > 0 &&
-                    result.candidates[0].content && result.candidates[0].content.parts &&
-                    result.candidates[0].content.parts.length > 0) {
-                    
-                    const jsonText = result.candidates[0].content.parts[0].text;
-                    const data = JSON.parse(jsonText);
-                    updateUI(data);
+            const result = await response.json();
 
-                    // **[MODIFIED]** Increment and save trial count on success
-                    trialCount++;
-                    localStorage.setItem('aiScribeTrialCount', trialCount);
-                    updateTrialDisplay();
-                    checkTrialLimitAndDisable();
-
-                } else {
-                    console.error('Unexpected API response structure:', result);
-                    throw new Error('AIからの有効な応答がありませんでした。');
-                }
-
-            } catch (error) {
-                console.error('Error processing with AI:', error);
-                alert(`AI処理中にエラーが発生しました: ${error.message}`);
-                updateStatus('error');
-            } finally {
-                updateStatus('idle');
+            if (result.candidates && result.candidates.length > 0 &&
+                result.candidates[0].content && result.candidates[0].content.parts &&
+                result.candidates[0].content.parts.length > 0) {
+                return result.candidates[0].content.parts[0].text;
+            } else {
+                console.error('Unexpected API response structure:', result);
+                throw new Error('AIからの有効な応答がありませんでした。');
             }
         }
 
-        // Update UI with AI results
         function updateUI(data) {
             if (data.soap_note) {
                 outputS.textContent = data.soap_note.subjective || '（情報なし）';
