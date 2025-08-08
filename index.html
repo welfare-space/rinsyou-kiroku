@@ -7,18 +7,19 @@
 <style>
   body { font-family: sans-serif; margin: 20px; }
   #rec-toolbar button { padding: 6px 10px; }
+  textarea { width: 100%; }
 </style>
 </head>
 <body>
 <h1>AIアンビエント臨床記録デモ</h1>
 <div>
   <label>医師と患者の会話:</label>
-  <textarea id="conversation" rows="6" style="width:100%;"></textarea>
+  <textarea id="conversation" rows="6"></textarea>
 </div>
 <div style="margin-top:10px;">
   <button onclick="generateRecord()">カルテを生成</button>
 </div>
-<div id="record-output" style="margin-top:20px; border:1px solid #ccc; padding:10px;"></div>
+<div id="record-output" style="margin-top:20px; border:1px solid #ccc; padding:10px; white-space:pre-wrap;"></div>
 
 <!-- 録音UI -->
 <div id="rec-toolbar" style="margin-top:20px; display:flex; gap:8px; align-items:center;">
@@ -42,12 +43,11 @@ function generateRecord() {
   document.getElementById('record-output').textContent = record;
 }
 
-// 録音機能
 let mediaRecorder;
 let recordedChunks = [];
 const startBtn = document.getElementById('startRec');
 const stopBtn = document.getElementById('stopRec');
-downloadBtn = document.getElementById('downloadRec');
+const downloadBtn = document.getElementById('downloadRec');
 const uploadBtn = document.getElementById('uploadRec');
 const audioEl = document.getElementById('audioPlayback');
 const transcriptEl = document.getElementById('transcript');
@@ -108,7 +108,7 @@ stopBtn.addEventListener('click', () => {
     mediaRecorder.stop();
     startBtn.disabled = false;
     stopBtn.disabled = true;
-    transcriptEl.textContent = transcriptEl.textContent + '\n[録音停止]';
+    transcriptEl.textContent += '\n[録音停止]';
     if (mediaRecorder._speechRecognition) {
       try { mediaRecorder._speechRecognition.stop(); } catch(e) {}
     }
